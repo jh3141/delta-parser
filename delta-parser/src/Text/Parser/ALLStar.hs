@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs,StandaloneDeriving,UndecidableInstances,FlexibleContexts,ScopedTypeVariables #-}
+{-# LANGUAGE GADTs,StandaloneDeriving,UndecidableInstances,FlexibleContexts,ScopedTypeVariables,TupleSections #-}
 module Text.Parser.ALLStar where
 
 import Data.IORef
@@ -10,6 +10,7 @@ import qualified Data.Map as M
 import Data.Set (Set)
 import qualified Data.Set as S
 import System.IO.Unsafe
+import Data.Foldable
 import Data.Maybe
 import Control.Arrow
 
@@ -177,6 +178,12 @@ mkCache = AutomataCache <$> newIORef Nothing <*> newIORef Nothing
 emptyATN :: ATN c nt s
 emptyATN = ATN 0 IM.empty M.empty IM.empty IM.empty IM.empty
 
+atnStateToProduction :: ATN c nt s -> Int -> Maybe Int
+atnStateToProduction atn state = fst <$> (IM.lookup state (atnStateProductionIndex atn) >>= maybeFromRight)
+
+maybeFromRight :: Either a b -> Maybe b
+maybeFromRight = either (const Nothing) Just
+
 -- | Build an ATN incrementally by adding one production at a time.
 -- Example:
 --
@@ -301,16 +308,66 @@ insertTransition fromState toState edge transitionMap =
         Just edges -> IM.insert fromState (M.insertWith (++) edge [toState] edges) transitionMap
 
 -- | Examine an ATN for potential problems that will prevent it being usefully implemented.
--- Returns a list of messages describing the located problems, which is empty if none are detected.
-verifyATN :: (Show nt, Ord nt) => ATN c nt s -> [String]
+-- Returns a list of messages describing the located problems and the sequence of production numbers involved.
+-- The message list is empty if the ATN is well-formed.
+verifyATN :: (Show nt, Ord nt) => ATN c nt s -> [(String, [Int])]
 verifyATN atn = missingNonTerminals ++ leftRecursiveEntries
     where
-        missingNonTerminals = concatMap checkForDefinition findNonTerminals
-        checkForDefinition nt
+        missingNonTerminals = concatMap checkForDefinition findUsedNonTerminals
+        checkForDefinition (nt, prodNum)
             | M.member nt (atnNonTerminalStates atn) = []
-            | otherwise                              = ["Non-terminal symbol " ++ show nt ++ " undefined"]
-        findNonTerminals = foldMap (S.fromList . catMaybes . fmap edgeNonTerminal . M.keys) (atnTransitionMap atn)
-        leftRecursiveEntries = []
+            | otherwise                              = [("Non-terminal symbol " ++ show nt ++ " undefined", prodNum)]
+        findUsedNonTerminals = IM.foldMapWithKey collectNonTerminals (atnTransitionMap atn)
+        collectNonTerminals state transitions = (,maybeToList $ atnStateToProduction atn state) `S.map` S.fromList (catMaybes $ edgeNonTerminal <$> M.keys transitions)
+        leftRecursiveEntries = concat (checkLeftRecursive <$> definedNonTerminals)
+        definedNonTerminals = M.keys $ atnNonTerminalStates atn
+        checkLeftRecursive nt =
+            case M.lookup nt $ leftmostNonTerminals atn nt of
+                Just path -> [("Left-recursive definition of non-terminal symbol " ++ show nt, path)]
+                Nothing   -> []
+
+allProductionStarts :: Ord nt => ATN c nt s -> nt -> [Int]
+allProductionStarts atn nt =
+    case fst <$> M.lookup nt (atnNonTerminalStates atn) of
+        Just startState -> followEpsilons atn startState
+        Nothing         -> []
+
+followEpsilons :: ATN c nt s -> Int -> [Int]
+followEpsilons atn s =
+    let stateTransitions = IM.lookup s (atnTransitionMap atn)
+        maybeOutputStates = stateTransitions >>= M.lookup Epsilon
+    in  concat (maybeToList maybeOutputStates)
+
+nonTerminalEdgesFrom :: ATN c nt s -> Int -> [(nt, Int)]
+nonTerminalEdgesFrom atn state =
+    case IM.lookup state (atnTransitionMap atn) of
+        Just stateTransitions -> concatMap expandSelectedEdges (first edgeNonTerminal <$> M.toAscList stateTransitions)
+        Nothing               -> []
+    where
+        expandSelectedEdges (Nothing, _) = []
+        expandSelectedEdges (Just nt, states) = [(nt, s) | s <- states]
+
+leftmostNonTerminals :: forall c nt s . Ord nt => ATN c nt s -> nt -> M.Map nt [Int]
+leftmostNonTerminals atn root =
+    findPathsFrom root [] M.empty
+    where
+        findPathsFrom :: nt -> [Int] -> M.Map nt [Int] -> M.Map nt [Int]
+        findPathsFrom nt path shortestPaths = mergeNonTerminals shortestPaths path $ allProductionStarts atn nt
+
+        mergeNonTerminals :: M.Map nt [Int] -> [Int] -> [Int] -> M.Map nt [Int]
+        mergeNonTerminals shortestPaths _ [] = shortestPaths
+        mergeNonTerminals shortestPaths currentPath (state:states) = foldl' (addShorterPath (state:currentPath))
+                                                                            (mergeNonTerminals shortestPaths currentPath states)
+                                                                            (nonTerminalEdgesFrom atn state)
+
+        addShorterPath :: [Int] -> M.Map nt [Int] -> (nt, Int) -> M.Map nt [Int]
+        addShorterPath path shortestPaths (nt, _) =
+            case M.lookup nt shortestPaths of
+                Nothing                                 -> findPathsFrom nt path $ M.insert nt path shortestPaths
+                Just existingPath
+                    | length existingPath > length path -> findPathsFrom nt path $ M.insert nt path shortestPaths
+                    | otherwise                         -> shortestPaths
+
 
 productionMaxLength :: Int
 productionMaxLength = 1000
