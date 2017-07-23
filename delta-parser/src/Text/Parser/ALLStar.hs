@@ -51,8 +51,28 @@ data AutomatonEdge c nt s where
     Epsilon         ::                              AutomatonEdge c nt s
     TerminalEdge    :: (Ord c, Show c)   => c ->    AutomatonEdge c nt s
     NonTerminalEdge :: (Ord nt, Show nt) => nt ->   AutomatonEdge c nt s
-    PredicateEdge   :: Int -> (Predicate [nt] s) -> AutomatonEdge c nt s
+    PredicateEdge   :: Int -> Predicate [nt] s ->   AutomatonEdge c nt s
     MutationEdge    :: Int -> (s -> s)    ->        AutomatonEdge c nt s
+
+edgeIsEpsilon :: AutomatonEdge c nt s -> Bool
+edgeIsEpsilon Epsilon = True
+edgeIsEpsilon _       = False
+
+edgeNonTerminal :: AutomatonEdge c nt s -> Maybe nt
+edgeNonTerminal (NonTerminalEdge nt) = Just nt
+edgeNonTerminal _                    = Nothing
+
+edgeTerminal :: AutomatonEdge c nt s -> Maybe c
+edgeTerminal (TerminalEdge c) = Just c
+edgeTerminal _                = Nothing
+
+edgePredicate :: AutomatonEdge c nt s -> Maybe (Int, Predicate [nt] s)
+edgePredicate (PredicateEdge n p) = Just (n,p)
+edgePredicate _                   = Nothing
+
+edgeMutation :: AutomatonEdge c nt s -> Maybe (Int, s -> s)
+edgeMutation (MutationEdge n f) = Just (n,f)
+edgeMutation _                  = Nothing
 
 instance Eq (AutomatonEdge c nt s) where
     Epsilon               == Epsilon               = True
@@ -183,7 +203,15 @@ emptyATN = ATN 0 IM.empty M.empty IM.empty IM.empty IM.empty
 -- >     ...
 -- >     (8,fromList [(<"opt-ws">,[9])]),
 -- >     (9,fromList [(<"target-signifier">,[10])]),
---       (10,fromList [({epsilon},[1])])], atnEndStateNonTerminal = fromList [(1,"hello")]}
+-- >     (10,fromList [({epsilon},[1])])],
+-- >  atnEndStateNonTerminal = fromList [(1,"hello")]
+-- >}
+--
+-- Note that this network doesn't represent a complete grammar, as it doesn't include start or accept states
+-- for the non-terminals "opt-ws" and "target-signifier" that have been referenced in the transition map.
+-- 'verifyATN' can be used to check for this condition, as well as other problematic conditions (e.g.
+-- left recursion).
+
 addProductionToATN :: ATN c nt s -> nt -> Production t nt s c -> ATN c nt s
 addProductionToATN atn nt (Production prodNum optPred symbols) =
     process atn
@@ -271,6 +299,18 @@ insertTransition fromState toState edge transitionMap =
     case IM.lookup fromState transitionMap of
         Nothing    -> IM.insert fromState (M.fromList [(edge, [toState])]) transitionMap
         Just edges -> IM.insert fromState (M.insertWith (++) edge [toState] edges) transitionMap
+
+-- | Examine an ATN for potential problems that will prevent it being usefully implemented.
+-- Returns a list of messages describing the located problems, which is empty if none are detected.
+verifyATN :: (Show nt, Ord nt) => ATN c nt s -> [String]
+verifyATN atn = missingNonTerminals ++ leftRecursiveEntries
+    where
+        missingNonTerminals = concatMap checkForDefinition findNonTerminals
+        checkForDefinition nt
+            | M.member nt (atnNonTerminalStates atn) = []
+            | otherwise                              = ["Non-terminal symbol " ++ show nt ++ " undefined"]
+        findNonTerminals = foldMap (S.fromList . catMaybes . fmap edgeNonTerminal . M.keys) (atnTransitionMap atn)
+        leftRecursiveEntries = []
 
 productionMaxLength :: Int
 productionMaxLength = 1000
