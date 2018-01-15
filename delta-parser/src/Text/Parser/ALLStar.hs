@@ -161,6 +161,16 @@ data Grammar t nt s c where
 data ParseTree t nt s c where
     ParseTree :: Symbol t nt s c -> s -> [Either t (ParseTree t nt s c)] -> s -> ParseTree t nt s c
 
+-- | Combines an ATN with details required for adding information about a
+-- production (the start and end states for the non-terminal produced by
+-- the production, and the most recently added state for the production).
+type ATNWithProductionCursor c nt s = (ATN c nt s, (Int, Int, Int))
+
+-- | Combines an ATN with the start and end state for a non-terminal (it
+-- is assumed that the caller knows from context which non-terminal they refer
+-- to).
+type ATNWithNonTerminalState c nt s = (ATN c nt s, (Int, Int))
+
 startSymbol :: Grammar t nt s c -> nt
 startSymbol (Grammar _ ss _) = ss
 
@@ -229,7 +239,10 @@ addProductionToATN atn nt (Production prodNum optPred symbols) =
                   atnAddProductionSymbols prodNum symbols >>>
                   atnAddEndStateLink
 
-atnAddOrFindNonTerminal :: Ord nt => nt -> ATN c nt s -> (ATN c nt s, (Int, Int))
+-- | For a given non-terminal and an ATN, return an ATN (possibly modified by
+-- adding index entries and start/accept states for the non-terminal) and a
+-- tuple defining the start and accept states for the non-terminal.
+atnAddOrFindNonTerminal :: Ord nt => nt -> ATN c nt s -> ATNWithNonTerminalState c nt s
 atnAddOrFindNonTerminal nt atn =
     case M.lookup nt (atnNonTerminalStates atn) of
         Just states -> (atn, states)
@@ -249,7 +262,13 @@ atnAddOrFindNonTerminal nt atn =
                         IM.insert stateStop nt (atnEndStateNonTerminal atn)
                 }, newStates)
 
-atnAddProductionStartState :: Ord nt => Int -> (ATN c nt s, (Int, Int)) -> (ATN c nt s, (Int, Int, Int))
+-- | Given a production number and an tuple containing an ATN and the start
+-- and stop states for a spefic non-terminal (which is assumed to be produced by
+-- the identified production), allocate a start state for the production,
+-- update indices, add an epsilon transition from the non-terminal start state
+-- to the production start state, and return the ATN along with a triple defining
+-- the non-terminal start and stop states and the allocated production start state.
+atnAddProductionStartState :: Ord nt => Int -> ATNWithNonTerminalState c nt s -> ATNWithProductionCursor c nt s
 atnAddProductionStartState prodNum (atn,(ntStart,ntEnd)) =
     let
         newState = atnStateCount atn
@@ -262,7 +281,9 @@ atnAddProductionStartState prodNum (atn,(ntStart,ntEnd)) =
         atnTransitionMap = insertTransition ntStart newState Epsilon $ atnTransitionMap atn
     }, (newState, ntEnd, 0))
 
-atnAddProductionPredicate :: Ord nt => Int -> Maybe (Predicate [nt] s) -> (ATN c nt s, (Int, Int, Int)) -> (ATN c nt s, (Int, Int, Int))
+-- | Given a production number and optional predicate on the production, add a
+-- predicate edge to
+atnAddProductionPredicate :: Ord nt => Int -> Maybe (Predicate [nt] s) -> ATNWithProductionCursor c nt s -> ATNWithProductionCursor c nt s
 atnAddProductionPredicate _ Nothing atn = atn
 atnAddProductionPredicate prodNum (Just predicate) (atn,(ntStart,ntEnd,i)) =
     let
@@ -274,7 +295,8 @@ atnAddProductionPredicate prodNum (Just predicate) (atn,(ntStart,ntEnd,i)) =
         atnTransitionMap = insertTransition ntStart newState (PredicateEdge (prodNum * productionMaxLength + i) predicate) $ atnTransitionMap atn
     }, (newState, ntEnd, i+1))
 
-atnAddProductionSymbols :: (Ord c, Ord nt, Show c, Show nt) => Int -> [Either c nt] -> (ATN c nt s, (Int, Int, Int)) -> (ATN c nt s, (Int, Int, Int))
+-- | Update an ATN
+atnAddProductionSymbols :: (Ord c, Ord nt, Show c, Show nt) => Int -> [Either c nt] -> ATNWithProductionCursor c nt s -> ATNWithProductionCursor c nt s
 atnAddProductionSymbols _ [] atn = atn
 atnAddProductionSymbols prodNum (Left c:syms) (atn,(ntStart,ntEnd,i)) =
     let
@@ -295,12 +317,16 @@ atnAddProductionSymbols prodNum (Right nt:syms) (atn,(ntStart,ntEnd,i)) =
         atnTransitionMap = insertTransition ntStart newState (NonTerminalEdge nt) $ atnTransitionMap atn
     }, (newState, ntEnd, i+1))
 
-atnAddEndStateLink :: (ATN c nt s, (Int, Int, Int)) -> ATN c nt s
+-- | Update an ATN to add a transition from the last state in a production to the
+-- accept state for the non-terminal produced by the production.
+atnAddEndStateLink :: ATNWithProductionCursor c nt s -> ATN c nt s
 atnAddEndStateLink (atn, (ntLast, ntEnd, _)) = atn {
         atnTransitionMap = insertTransition ntLast ntEnd Epsilon $ atnTransitionMap atn
     }
 
 
+-- | Add a transition to a transition map from 'fromState' to 'toState' with the
+-- edge label 'edge'.
 insertTransition :: Int -> Int -> AutomatonEdge c nt s -> IntMap (M.Map (AutomatonEdge c nt s) [Int]) -> IntMap (M.Map (AutomatonEdge c nt s) [Int])
 insertTransition fromState toState edge transitionMap =
     case IM.lookup fromState transitionMap of
@@ -326,17 +352,25 @@ verifyATN atn = missingNonTerminals ++ leftRecursiveEntries
                 Just path -> [("Left-recursive definition of non-terminal symbol " ++ show nt, path)]
                 Nothing   -> []
 
+-- | Given an ATN and a non-terminal defined within that ATN, find all valid
+-- states that can be used to begin parsing at the specified non-terminal.
 allProductionStarts :: Ord nt => ATN c nt s -> nt -> [Int]
 allProductionStarts atn nt =
     case fst <$> M.lookup nt (atnNonTerminalStates atn) of
         Just startState -> followEpsilons atn startState
         Nothing         -> []
 
+-- | Given an ATN and a state in the ATN, find all successor states that can
+-- be consumed without consuming input (i.e. by following transitions that are
+-- labelled with epsilon).
 followEpsilons :: ATN c nt s -> Int -> [Int]
 followEpsilons atn s =
     let stateTransitions = IM.lookup s (atnTransitionMap atn)
         maybeOutputStates = stateTransitions >>= M.lookup Epsilon
     in  concat (maybeToList maybeOutputStates)
+
+-- | Find edges from a given ATN state that correspond to non-terminals.
+-- Returns a list of (non-terminal, state-after-non-terminal-accepted) pairs.
 
 nonTerminalEdgesFrom :: ATN c nt s -> Int -> [(nt, Int)]
 nonTerminalEdgesFrom atn state =
@@ -347,19 +381,48 @@ nonTerminalEdgesFrom atn state =
         expandSelectedEdges (Nothing, _) = []
         expandSelectedEdges (Just nt, states) = [(nt, s) | s <- states]
 
+-- | For a given ATN and a non-terminal root node appearing in that NT, find
+-- the shortest left-most derivations from that root node to any sequence of symbols
+-- beginning with each reachable initial non-terminal.
+--
+-- The resulting map of non-terminals to derivations will contain an entry for the
+-- given root non-terminal if and only if there is a left-recursive rule that
+-- allows derivation of it.  Such a rule is not-permitted in grammars that can
+-- be parsed by LL parsers, including ALL(*).
+--
+-- Derivations are returned in reverse order (i.e. with the most recently applied
+-- rule first), as this is easier to calculate.
 leftmostNonTerminals :: forall c nt s . Ord nt => ATN c nt s -> nt -> M.Map nt [Int]
 leftmostNonTerminals atn root =
     findPathsFrom root [] M.empty
     where
+        -- find all shortest derivations that include a given non-terminal as their
+        -- leftmost symbol, which is reached by a given prefix list of derivations,
+        -- merging into a given map of derivations if and only if they are shorter
+        -- than existing derivations in the map.
         findPathsFrom :: nt -> [Int] -> M.Map nt [Int] -> M.Map nt [Int]
         findPathsFrom nt path shortestPaths = mergeNonTerminals shortestPaths path $ allProductionStarts atn nt
 
+        -- merge a map of derivations to given non-terminals with newer
+        -- derivations found by considering a given derivation prefix and list
+        -- of possible next derivations to add (updating derivations in the map
+        -- where this reults in a shorter derivation to the same non-terminal
+        -- or adding new derivations when a non-terminal is found for the first time),
+        -- recursively expanding each new entry added to the map.
         mergeNonTerminals :: M.Map nt [Int] -> [Int] -> [Int] -> M.Map nt [Int]
         mergeNonTerminals shortestPaths _ [] = shortestPaths
         mergeNonTerminals shortestPaths currentPath (state:states) = foldl' (addShorterPath (state:currentPath))
                                                                             (mergeNonTerminals shortestPaths currentPath states)
                                                                             (nonTerminalEdgesFrom atn state)
 
+        -- given a derivation to a specified leftmost non-terminal and a map of
+        -- existing paths, if the path is shorter than any existing path (or if
+        -- there are no existing paths) then add the path to the map and
+        -- recursively attempt to add paths found that begin with that prefix.
+        -- the non-terminal is accepted in the form of a tuple with an additional
+        -- integer argument as a convenience (this function is called with the
+        -- result of 'nonTerminalEdgesFrom', which returns a list of valid
+        -- state transitions; we don't care about the resulting state).
         addShorterPath :: [Int] -> M.Map nt [Int] -> (nt, Int) -> M.Map nt [Int]
         addShorterPath path shortestPaths (nt, _) =
             case M.lookup nt shortestPaths of
