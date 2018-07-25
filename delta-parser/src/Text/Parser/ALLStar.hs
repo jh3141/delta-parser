@@ -14,6 +14,8 @@ import Data.Foldable
 import Data.Maybe
 import Control.Arrow
 
+-- | A predicate is a function that examines a parse stack and a "state" (which is a user defined type)
+-- and returns a bool.  It is used as a guard to allow productions to be context sensitive.
 type Predicate stack state = stack -> state -> Bool
 
 data Symbol t nt s c where
@@ -26,55 +28,93 @@ deriving instance (Show c, Show nt, Classifiable t c) => Show (Symbol t nt s c)
 deriving instance (Eq c, Eq nt, Classifiable t c) =>     Eq (Symbol t nt s c)
 deriving instance (Ord c, Ord nt, Classifiable t c) =>   Ord (Symbol t nt s c)
 
+-- | A Production is a rule of a grammar.  There are two subtypes, 'Production' (which represents
+-- a translation from a non-terminal to a sequence of terminals and non-terminals) and 'Mutation'
+-- (which performs a translation of the parser state).
+-- The type of 'Production' has four variables: 't' (the type of terminals), 'nt' (the type of
+-- non-terminals), 's' (the type of states) and 'c' (the type of input units, e.g. characters).
+-- There must exist a 'Classifiable' class that allows 'c' units to be translated to terminals,
+-- and 'c' and 'nt' are both expected to implement the 'Show' and 'Ord' classes.
 data Production t nt s c where
+    -- | Constructor for production grammar rules.  Accepts an integer production number,
+    -- an optional predicate, and a sequence of either characters or non-terminals.
     Production :: (Classifiable t c, Show c, Ord c, Show nt, Ord nt) =>
                   Int -> Maybe (Predicate [nt] s) -> [Either c nt] -> Production t nt s c
+    -- | Constructor for mutators.  Accepts an integer production number, and a function that
+    -- translates from one state to another.
     Mutation   :: Int -> (s -> s)                                  -> Production t nt s c
 
+-- | Implementation of 'Show' for 'Production's (for the purpose of debugging)
 instance Show (Production t nt s c) where
     show (Production n (Just _) syms) = "{pred} " ++ show n ++ ": " ++ unwords (map (either show show) syms)
     show (Production n Nothing syms)  = show n ++ ": " ++ unwords (map (either show show) syms)
     show (Mutation   _ _)             = "{mu}"
 
+-- | Equality testing for 'Production's.
 instance Eq (Production t nt s c) where
     (Production n (Just _) syms) == (Production n' (Just _) syms') = n == n' && syms == syms'
     (Production n Nothing  syms) == (Production n' Nothing  syms') = n == n' && syms == syms'
     (Mutation n _)               == (Mutation   n' _)              = n == n' -- mutations are assumed identical if they have the same serial number
     _                            == _                              = False
 
+-- | Ordering of 'Production's.
 instance Ord (Production t nt s c) where
     compare (Production n _ _) (Production n' _ _) = compare n n'
     compare (Production _ _ _) _                   = LT
     compare (Mutation   n _)   (Mutation   n' _)   = compare n n'
     compare (Mutation   _ _)   _                   = GT
 
+-- | Represents an edge in an Augmented Transition Network, used to encapsulate
+-- the production rules of the grammar in a form that is easy to translate
+-- to the deterministic finite state automaton that is used to predict grammar
+-- productions when ambiguities arise.  The edges in an ATN are non-deterministic
+-- and therefore are not necessarily followed in every situation where they may
+-- be followed.  The constructed DFA uses states that are representations of the
+-- possible states of the ATN.
 data AutomatonEdge c nt s where
+    -- | An Epsilon edge is an edge that can be followed at any time
     Epsilon         ::                              AutomatonEdge c nt s
+    -- | A TerminalEdge is an edge that can be followed if the respective
+    -- terminal symbol is located in a partially-parsed input
     TerminalEdge    :: (Ord c, Show c)   => c ->    AutomatonEdge c nt s
+    -- | A NonTerminalEdge is an edge that can be followed when a non-terminal
+    -- symbol is located in the input
     NonTerminalEdge :: (Ord nt, Show nt) => nt ->   AutomatonEdge c nt s
+    -- | A PredicateEdge is an edge that can be followed when a predicate on
+    -- the set of non-terminals to the left of the current parse point
+    -- and the current state returns true
     PredicateEdge   :: Int -> Predicate [nt] s ->   AutomatonEdge c nt s
+    -- | A MutationEdge is an edge that can be followed at any time, and which
+    -- produces a new state from the current state, which may be used by
+    -- any predicates later on in the network.
     MutationEdge    :: Int -> (s -> s)    ->        AutomatonEdge c nt s
 
+-- | Returns true iff an edge is an 'Epsilon' edge
 edgeIsEpsilon :: AutomatonEdge c nt s -> Bool
 edgeIsEpsilon Epsilon = True
 edgeIsEpsilon _       = False
 
+-- | Returns true iff an edge is a non-terminal edge
 edgeNonTerminal :: AutomatonEdge c nt s -> Maybe nt
 edgeNonTerminal (NonTerminalEdge nt) = Just nt
 edgeNonTerminal _                    = Nothing
 
+-- | Returns true iff an edge is a terminal edge
 edgeTerminal :: AutomatonEdge c nt s -> Maybe c
 edgeTerminal (TerminalEdge c) = Just c
 edgeTerminal _                = Nothing
 
+-- | Returns true iff an edge is a predicate edge
 edgePredicate :: AutomatonEdge c nt s -> Maybe (Int, Predicate [nt] s)
 edgePredicate (PredicateEdge n p) = Just (n,p)
 edgePredicate _                   = Nothing
 
+-- | Returns true iff an edge is a mutation edge
 edgeMutation :: AutomatonEdge c nt s -> Maybe (Int, s -> s)
 edgeMutation (MutationEdge n f) = Just (n,f)
 edgeMutation _                  = Nothing
 
+-- | Automaton edges may be examined for equality
 instance Eq (AutomatonEdge c nt s) where
     Epsilon               == Epsilon               = True
     (TerminalEdge c)      == (TerminalEdge c')     = c == c'
@@ -83,6 +123,8 @@ instance Eq (AutomatonEdge c nt s) where
     (MutationEdge n _)    == (MutationEdge n' _)   = n == n'
     _                     == _                     = False
 
+-- | Automaton edges may be ordered (in the order Epsilon, TerminalEdge,
+-- NonTerminalEdge, PredicateEdge, MutationEdge)
 instance Ord (AutomatonEdge c nt s) where
     compare Epsilon             Epsilon              = EQ
     compare Epsilon             _                    = LT
@@ -105,6 +147,7 @@ instance Ord (AutomatonEdge c nt s) where
     compare (MutationEdge n _)  (MutationEdge n' _)  = compare n n'
     compare (MutationEdge _ _)  _                    = GT
 
+-- | Automaton edges may be displayed for debugging purposes
 instance Show (AutomatonEdge c nt s) where
     show Epsilon              = "{epsilon}"
     show (TerminalEdge c)     = show c
@@ -132,7 +175,7 @@ data ATN c nt s = ATN {
         -- | for each state that is a final state, identifies the non-terminal that is produced in that state
         atnEndStateNonTerminal   :: IntMap nt
     }
-    deriving (Show)
+    deriving (Show, Eq)
 
 -- | represents the calculated portions of the (potentially-infinite) deterministic finite state automaton that predicts
 -- the production to take at each choice point in the parse.  uses mutable hash tables to allow new states and edges
@@ -144,26 +187,34 @@ data DFA c nt s = DFA {
         dfaAcceptStates  :: IntMap Int                                          -- states that produce a prediction
     }
 
+-- | stores mutable references to a cached ATN and lookahead DFA for a grammar
 data AutomataCache c nt s = AutomataCache {
         cachedATN :: IORef (Maybe (ATN c nt s)),
         cachedLookaheadDFA :: IORef (Maybe (DFA c nt s))
     } deriving Eq
 
+-- | Automata caches can show whether ATN and DFA fields are populated for debugging purposes
 instance Show (AutomataCache c nt s) where
     show acache = "{cache" ++ (if isATNAvailable acache then "-atn" else "") ++
                               (if isDFAAvailable acache then "-dfa" else "") ++ "}"
 
+-- | A Grammar consists of a set of symbols (along with their associated rules),
+-- a start symbol, and a cache optionally containing the two automata that are
+-- used for parsing it.
 
 data Grammar t nt s c where
     Grammar    :: [Symbol t nt s c] -> nt -> AutomataCache c nt s -> Grammar t nt s c
     deriving (Show, Eq)
 
+-- | The result of successfully parsing an input stream is a parse tree, showing the productions
+-- used during parsing.
 data ParseTree t nt s c where
     ParseTree :: Symbol t nt s c -> s -> [Either t (ParseTree t nt s c)] -> s -> ParseTree t nt s c
 
 -- | Combines an ATN with details required for adding information about a
--- production (the start and end states for the non-terminal produced by
--- the production, and the most recently added state for the production).
+-- production (the state associated with the most recently added node in the
+-- production, the end state associated with the non-terminal being produced,
+-- and the number of symbols added in the production so far).
 type ATNWithProductionCursor c nt s = (ATN c nt s, (Int, Int, Int))
 
 -- | Combines an ATN with the start and end state for a non-terminal (it
@@ -171,6 +222,7 @@ type ATNWithProductionCursor c nt s = (ATN c nt s, (Int, Int, Int))
 -- to).
 type ATNWithNonTerminalState c nt s = (ATN c nt s, (Int, Int))
 
+-- | Returns the start symbol of a Grammar
 startSymbol :: Grammar t nt s c -> nt
 startSymbol (Grammar _ ss _) = ss
 
@@ -182,15 +234,26 @@ isATNAvailable (AutomataCache hATN _) = unsafePerformIO $ isJust <$> readIORef h
 isDFAAvailable :: AutomataCache c nt s -> Bool
 isDFAAvailable (AutomataCache _ hDFA) = unsafePerformIO $ isJust <$> readIORef hDFA
 
+-- | Creates an empty automata cache (containing neither an ATN nor a DFA)
 mkCache :: IO (AutomataCache c nt s)
 mkCache = AutomataCache <$> newIORef Nothing <*> newIORef Nothing
 
+-- | Produces an empty ATN
 emptyATN :: ATN c nt s
 emptyATN = ATN 0 IM.empty M.empty IM.empty IM.empty IM.empty
 
+-- | Produces an empty ATN for character input with strings for non-terminals
+-- and integers for state (convenience function)
+emptyATNCSI :: ATN Char String Int
+emptyATNCSI = emptyATN
+
+-- | Looks up an ATN state and returns the production number that the state was
+-- created to represent
 atnStateToProduction :: ATN c nt s -> Int -> Maybe Int
 atnStateToProduction atn state = fst <$> (IM.lookup state (atnStateProductionIndex atn) >>= maybeFromRight)
 
+-- | Given an 'Either', return a 'Maybe' that contains the 'Right' value of the 'Either' (or 'Nothing' for a 'Left'
+-- branch).
 maybeFromRight :: Either a b -> Maybe b
 maybeFromRight = either (const Nothing) Just
 
@@ -336,6 +399,10 @@ insertTransition fromState toState edge transitionMap =
 -- | Examine an ATN for potential problems that will prevent it being usefully implemented.
 -- Returns a list of messages describing the located problems and the sequence of production numbers involved.
 -- The message list is empty if the ATN is well-formed.
+-- Currently detects cases where non-terminals are used for transitions but do
+-- not have a corresponding accept state (i.e. they are used in the grammar but
+-- are not defined), and left-recursive definitions (including definitions that
+-- contain a sequence of left derivations that are mutually recursive).
 verifyATN :: (Show nt, Ord nt) => ATN c nt s -> [(String, [Int])]
 verifyATN atn = missingNonTerminals ++ leftRecursiveEntries
     where
@@ -431,6 +498,10 @@ leftmostNonTerminals atn root =
                     | length existingPath > length path -> findPathsFrom nt path $ M.insert nt path shortestPaths
                     | otherwise                         -> shortestPaths
 
-
+-- | Maximum number of symbols in a production, which is used for generating a unique number
+-- for each position in a production based on the number of the production.  This may safely
+-- be increased as necessary, but doing so may decrease efficiency for grammars with large
+-- numbers of productions.  The default value is suitable for most manually produced grammars,
+-- but may not be appropriate for complex machine generated grammars.
 productionMaxLength :: Int
 productionMaxLength = 1000

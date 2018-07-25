@@ -3,14 +3,16 @@ module ATNTests (allTests) where
 
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
+import Data.Maybe
 
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
-import Test.QuickCheck
+import Test.QuickCheck ()
 import Text.Parser.ALLStar
 
-
+inMap :: Ord k => k -> M.Map k a -> Bool
+k `inMap` m = isJust $ M.lookup k m
 
 allTests :: [TestTree]
 allTests =
@@ -69,10 +71,36 @@ allTests =
             assertEqual "incorrect entry for end state non terminal map"
                 (Just "nonterm") (IM.lookup s $ atnEndStateNonTerminal atn),
         testProperty "existing states not modified when adding nonterminals" $
-            \ (terminals :: [String]) ->
-                let (atn, (s1, s2)) :: ATNWithNonTerminalState Char String Int = atnAddOrFindNonTerminal "x" emptyATN in
-                let atn' = foldl (\ a t -> fst $ atnAddOrFindNonTerminal t a) atn terminals in
+            \ (nonterminals :: [String]) ->
+                let (atn, (s1, s2)) = atnAddOrFindNonTerminal "x" emptyATNCSI in
+                let atn' = foldl (\ a t -> fst $ atnAddOrFindNonTerminal t a) atn nonterminals in
                 let (_, (s3, s4)) = atnAddOrFindNonTerminal "x" atn' in
-                True ==> (s3, s4) == (s1, s2)
+                True ==> (s3, s4) == (s1, s2),
+        testProperty "all added nonterminals have start and end states" $
+            \ (nonterminals :: [String]) ->
+                let atn = foldl (\ a t -> fst $ atnAddOrFindNonTerminal t a) emptyATN nonterminals in
+                all (`inMap` atnNonTerminalStates atn) nonterminals,
+        testCase "adding a production start state increases state count by one" $ do
+            let (atn, _) = atnAddProductionStartState 5 (emptyATNCSI,(1,2))
+            assertEqual "state count" 1 (atnStateCount atn),
+        testCase "adding a production start state yields appropriate state triple" $ do
+            let (_, states) = atnAddProductionStartState 5 (emptyATNCSI {atnStateCount = 3},(1,2))
+            assertEqual "working states" (3,2,0) states,
+        testCase "epsilon edge for production start added" $ do
+            let (atn, _) = atnAddProductionStartState 5 (emptyATNCSI {atnStateCount = 3},(1,2))
+            let stateTransitions = IM.lookup 1 $ atnTransitionMap atn
+            assertEqual "edges from state 1" (Just [(Epsilon, [3])]) (M.toList <$> stateTransitions),
+        testCase "second production start for same non-terminal adds second epsilon" $ do
+            let (atn, _) = atnAddProductionStartState 5 (emptyATNCSI {atnStateCount = 3},(1,2))
+            let (atn', _) = atnAddProductionStartState 6 (atn, (1,2))
+            let stateTransitions = IM.lookup 1 $ atnTransitionMap atn'
+            assertEqual "edges from state 1" (Just [(Epsilon, [4, 3])]) (M.toList <$> stateTransitions),
+        testCase "adding an empty predicate doesn't change the ATN" $ do
+            let (origAtn, st) = atnAddProductionStartState 5 $ (emptyATNCSI { atnStateCount = 3 }, (1,2))
+            let (atn, _) = atnAddProductionPredicate 5 Nothing (origAtn, st)
+            assertEqual "atn compare to updated atn" origAtn atn
+
+
+
 
     ]
