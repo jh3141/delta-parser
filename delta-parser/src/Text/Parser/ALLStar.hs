@@ -301,6 +301,7 @@ addProductionToATN atn nt (Production prodNum optPred symbols) =
                   atnAddProductionPredicate prodNum optPred >>>
                   atnAddProductionSymbols prodNum symbols >>>
                   atnAddEndStateLink
+addProductionToATN _ _ (Mutation _ _) = error "adding mutators to ATN not supported"
 
 -- | For a given non-terminal and an ATN, return an ATN (possibly modified by
 -- adding index entries and start/accept states for the non-terminal) and a
