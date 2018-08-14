@@ -18,71 +18,71 @@ allTests :: [TestTree]
 allTests =
     [
         testCase "An empty ATN has no states" $
-            atnStateCount emptyATN @?= 0,
+                 atnStateCount emptyATNCSI @?= 0,
 
         testCase "An empty ATN has an empty state production index" $
-            IM.size (atnStateProductionIndex emptyATN) @?= 0,
+                 IM.size (atnStateProductionIndex emptyATNCSI) @?= 0,
 
         testCase "An empty ATN has an empty non terminal state map" $
-            M.size (atnNonTerminalStates emptyATN) @?= 0,
+                 M.size (atnNonTerminalStates emptyATNCSI) @?= 0,
 
         testCase "An empty ATN has an empty production start state map" $
-            IM.size (atnProductionStartState emptyATN) @?= 0,
+                 IM.size (atnProductionStartState emptyATNCSI) @?= 0,
 
         testCase "An empty ATN has an empty transition map" $
-            IM.size (atnTransitionMap emptyATN) @?= 0,
+                 IM.size (atnTransitionMap emptyATNCSI) @?= 0,
 
         testCase "An empty ATN has an empty end state nonterminal map" $
-            IM.size (atnEndStateNonTerminal emptyATN) @?= 0,
+                 IM.size (atnEndStateNonTerminal emptyATNCSI) @?= 0,
 
         testCase "Adding a non-terminal to an empty ATN creates 2 states" $
-            let (atn, _) = atnAddOrFindNonTerminal "nonterm" emptyATN
-             in atnStateCount atn @?= 2,
+                 let (atn, _) = atnAddOrFindNonTerminal "nonterm" emptyATNCSI
+                 in atnStateCount atn @?= 2,
 
         testCase "atnAddOrFindNonTerminal with unknown nonterminal returns (0,1)" $ do
-            let (_, (s, e)) = atnAddOrFindNonTerminal "nonterm" emptyATN
+            let (_, (s, e)) = atnAddOrFindNonTerminal "nonterm" emptyATNCSI
             assertEqual "start state should have been 0" 0 s
             assertEqual "end state should have been 1" 1 e,
 
         testCase "adding a second unknown nonterminal returns (2,3)" $ do
-            let (atn, _) = atnAddOrFindNonTerminal "t1" emptyATN
+            let (atn, _) = atnAddOrFindNonTerminal "t1" emptyATNCSI
             let (_, (s, e)) = atnAddOrFindNonTerminal "t2" atn
             assertEqual "start state should have been 2" 2 s
             assertEqual "end state should have been 3" 3 e,
 
         testCase "retrieving existing nonterminal retrieves old indices" $ do
-            let (atn, _) = atnAddOrFindNonTerminal "t1" emptyATN
+            let (atn, _) = atnAddOrFindNonTerminal "t1" emptyATNCSI
             let (_, (s, e)) = atnAddOrFindNonTerminal "t1" atn
             assertEqual "start state should have been 0" 0 s
             assertEqual "end state should have been 1" 1 e,
 
         testCase "retrieving existing nonterminal doesn't increase state count" $ do
-            let (atn, _) = atnAddOrFindNonTerminal "t1" emptyATN
+            let (atn, _) = atnAddOrFindNonTerminal "t1" emptyATNCSI
             let (atn2, _) = atnAddOrFindNonTerminal "t1" atn
             assertEqual "state count should have been 2" 2 $ atnStateCount atn2,
 
         testCase "added start state for a nonterminal is associated with it" $ do
-            let (atn, (s, _)) = atnAddOrFindNonTerminal "nonterm" emptyATN
+            let (atn, (s, _)) = atnAddOrFindNonTerminal "nonterm" emptyATNCSI
             let Just (Left (nt, _)) = IM.lookup s (atnStateProductionIndex atn)
             assertEqual "non terminal for state should have been 'nonterm'" "nonterm" nt,
 
         testCase "added start state for a nonterminal is a start state" $ do
-            let (atn, (s, _)) = atnAddOrFindNonTerminal "nonterm" emptyATN
+            let (atn, (s, _)) = atnAddOrFindNonTerminal "nonterm" emptyATNCSI
             let Just (Left (_, t)) = IM.lookup s (atnStateProductionIndex atn)
             assertEqual "type flag for state should have been False" False t,
 
         testCase "added stop state for a nonterminal is associated with it" $ do
-            let (atn, (_, s)) = atnAddOrFindNonTerminal "nonterm" emptyATN
+            let (atn, (_, s)) = atnAddOrFindNonTerminal "nonterm" emptyATNCSI
             let Just (Left (nt, _)) = IM.lookup s (atnStateProductionIndex atn)
             assertEqual "non terminal for state should have been 'nonterm'" "nonterm" nt,
 
         testCase "added stop state for a nonterminal is a stop state" $ do
-            let (atn, (_, s)) = atnAddOrFindNonTerminal "nonterm" emptyATN
+            let (atn, (_, s)) = atnAddOrFindNonTerminal "nonterm" emptyATNCSI
             let Just (Left (_, t)) = IM.lookup s (atnStateProductionIndex atn)
             assertEqual "type flag for state should have been True" True t,
 
         testCase "stop state is associated with correct nonterminal" $ do
-            let (atn, (_, s)) = atnAddOrFindNonTerminal "nonterm" emptyATN
+            let (atn, (_, s)) = atnAddOrFindNonTerminal "nonterm" emptyATNCSI
             assertEqual "incorrect entry for end state non terminal map"
                 (Just "nonterm") (IM.lookup s $ atnEndStateNonTerminal atn),
 
@@ -95,7 +95,7 @@ allTests =
 
         testProperty "all added nonterminals have start and end states" $
             \ (nonterminals :: [String]) ->
-                let atn = foldl (\ a t -> fst $ atnAddOrFindNonTerminal t a) emptyATN nonterminals in
+                let atn = foldl (\ a t -> fst $ atnAddOrFindNonTerminal t a) emptyATNCSI nonterminals in
                 all (`inMap` atnNonTerminalStates atn) nonterminals,
 
         testCase "adding a production start state increases state count by one" $ do
@@ -120,6 +120,12 @@ allTests =
         testCase "adding an empty predicate doesn't change the ATN" $ do
             let (origAtn, st) = atnAddProductionStartState 5 $ (emptyATNCSI { atnStateCount = 3 }, (1,2))
             let (atn, _) = atnAddProductionPredicate 5 Nothing (origAtn, st)
-            assertEqual "atn compare to updated atn" origAtn atn
+            assertEqual "atn compare to updated atn" origAtn atn,
+
+        testCase "atnProductionStart retrives start state for given production" $ do
+            let atn = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
+            -- at this point, state 0 should be the start state for "nonterm", state 2 the start state for
+            -- production 1, 3 the point after receiving 'h' and 1 the accept state for "nonterm".
+            assertEqual "production start should have been 2" (Just 2) $ atnProductionStart atn 1
 
     ]
