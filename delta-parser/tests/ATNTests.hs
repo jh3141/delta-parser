@@ -125,7 +125,13 @@ allTests =
         testCase "atnProductionStart retrives start state for given production" $ do
             let atn = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
             -- at this point, state 0 should be the start state for "nonterm", state 2 the start state for
-            -- production 1, 3 the point after receiving 'h' and 1 the accept state for "nonterm".
-            assertEqual "production start should have been 2" (Just 2) $ atnProductionStart atn 1
+            -- production 1, 3 the point after receiving 'h', 4 after 'i', and 1 the accept state for "nonterm".
+            assertEqual "production start should have been 2" (Just 2) $ atnProductionStart atn 1,
+
+        testCase "different start states for different productions of the same non-terminal" $ do
+            let atn1 = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
+            let atn = addProductionToATN atn1 "nonterm" (Production 2 Nothing [Left 'h', Left 'o'])
+            assertEqual "production 1 should start on state 2" (Just 2) $ atnProductionStart atn 1
+            assertEqual "production 2 should start on state 5" (Just 5) $ atnProductionStart atn 2
 
     ]
