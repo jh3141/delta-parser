@@ -132,6 +132,11 @@ allTests =
             let atn1 = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
             let atn = addProductionToATN atn1 "nonterm" (Production 2 Nothing [Left 'h', Left 'o'])
             assertEqual "production 1 should start on state 2" (Just 2) $ atnProductionStart atn 1
-            assertEqual "production 2 should start on state 5" (Just 5) $ atnProductionStart atn 2
+            assertEqual "production 2 should start on state 5" (Just 5) $ atnProductionStart atn 2,
+
+        testCase "can find valid production from a single state" $ do
+            let atn = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
+            let startState = fromJust $ atnProductionStart atn 1
+            assertEqual "should have found the correct state" (Just [3]) $ atnFindTransition atn startState (Left 'h')
 
     ]

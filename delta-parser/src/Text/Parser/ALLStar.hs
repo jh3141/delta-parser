@@ -510,7 +510,16 @@ leftmostNonTerminals atn root =
 atnProductionStart :: Classifiable t c => ATN t nt s c -> Int -> Maybe Int
 atnProductionStart atn prodnum = IM.lookup prodnum $ atnProductionStartState atn
 
-
+atnFindTransition :: (Classifiable t c, Ord c, Ord nt, Show c, Show nt) => ATN t nt s c -> Int -> Either c nt -> Maybe [Int]
+atnFindTransition atn state inp =
+    do
+        statemap <- IM.lookup state $ atnTransitionMap atn
+        M.lookup (expectedEdge inp) statemap
+    where
+        expectedEdge (Left term)     = TerminalEdge term
+        expectedEdge (Right nonterm) = NonTerminalEdge nonterm
+        
+        
 -- | Maximum number of symbols in a production, which is used for generating a unique number
 -- for each position in a production based on the number of the production.  This may safely
 -- be increased as necessary, but doing so may decrease efficiency for grammars with large
