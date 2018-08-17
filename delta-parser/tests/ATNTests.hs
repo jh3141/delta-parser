@@ -137,6 +137,16 @@ allTests =
         testCase "can find valid production from a single state" $ do
             let atn = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
             let startState = fromJust $ atnProductionStart atn 1
-            assertEqual "should have found the correct state" (Just [3]) $ atnFindTransition atn startState (Left 'h')
+            assertEqual "should have found the correct state" (Just [3]) $ atnFindTransition atn startState (Left 'h'),
+
+        testCase "can find nonterminal production from a single state" $ do
+            let atn = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Right "another", Left 'i'])
+            let startState = fromJust $ atnProductionStart atn 1
+            assertEqual "should have found the correct state" (Just [3]) $ atnFindTransition atn startState (Right "another"),
+
+        testCase "no transition found when no match" $ do
+            let atn = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
+            let startState = fromJust $ atnProductionStart atn 1
+            assertEqual "should have not found a transition" Nothing $ atnFindTransition atn startState (Left 'i')
 
     ]
