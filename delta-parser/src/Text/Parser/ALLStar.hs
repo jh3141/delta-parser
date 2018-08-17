@@ -19,14 +19,14 @@ import Control.Arrow
 type Predicate stack state = stack -> state -> Bool
 
 data Symbol t nt s c where
-    Terminal ::    (Classifiable t c, Show c, Ord c) =>
+    Terminal ::    (Classifiable c t, Show c, Ord c) =>
                    c                           -> Symbol t nt s c
-    NonTerminal :: Classifiable t c =>
+    NonTerminal :: Classifiable c t =>
                    nt -> [Production t nt s c] -> Symbol t nt s c
 
-deriving instance (Show c, Show nt, Classifiable t c) => Show (Symbol t nt s c)
-deriving instance (Eq c, Eq nt, Classifiable t c) =>     Eq (Symbol t nt s c)
-deriving instance (Ord c, Ord nt, Classifiable t c) =>   Ord (Symbol t nt s c)
+deriving instance (Show c, Show nt, Classifiable c t) => Show (Symbol t nt s c)
+deriving instance (Eq c, Eq nt, Classifiable c t) =>     Eq (Symbol t nt s c)
+deriving instance (Ord c, Ord nt, Classifiable c t) =>   Ord (Symbol t nt s c)
 
 -- | A Production is a rule of a grammar.  There are two subtypes, 'Production' (which represents
 -- a translation from a non-terminal to a sequence of terminals and non-terminals) and 'Mutation'
@@ -38,8 +38,8 @@ deriving instance (Ord c, Ord nt, Classifiable t c) =>   Ord (Symbol t nt s c)
 data Production t nt s c where
     -- | Constructor for production grammar rules.  Accepts an integer production number,
     -- an optional predicate, and a sequence of either characters or non-terminals.
-    Production :: (Classifiable t c, Show c, Ord c, Show nt, Ord nt) =>
-                  Int -> Maybe (Predicate [nt] s) -> [Either c nt] -> Production t nt s c
+    Production :: (Classifiable c t, Show t, Ord t, Show nt, Ord nt) =>
+                  Int -> Maybe (Predicate [nt] s) -> [Either t nt] -> Production t nt s c
     -- | Constructor for mutators.  Accepts an integer production number, and a function that
     -- translates from one state to another.
     Mutation   :: Int -> (s -> s)                                  -> Production t nt s c
@@ -74,9 +74,9 @@ instance Ord (Production t nt s c) where
 data AutomatonEdge t nt s c where
     -- | An Epsilon edge is an edge that can be followed at any time
     Epsilon         ::                              AutomatonEdge t nt s c
-    -- | A TerminalEdge is an edge that can be followed if the respective
-    -- terminal symbol is located in a partially-parsed input
-    TerminalEdge    :: (Ord c, Show c)   => c ->    AutomatonEdge t nt s c
+    -- | A TerminalEdge is an edge that can be followed if a terminal
+    -- symbol of the appropriate class is located in a partially-parsed input
+    TerminalEdge    :: (Ord t, Show t)   => t ->    AutomatonEdge t nt s c
     -- | A NonTerminalEdge is an edge that can be followed when a non-terminal
     -- symbol is located in the input
     NonTerminalEdge :: (Ord nt, Show nt) => nt ->   AutomatonEdge t nt s c
@@ -100,7 +100,7 @@ edgeNonTerminal (NonTerminalEdge nt) = Just nt
 edgeNonTerminal _                    = Nothing
 
 -- | Returns true iff an edge is a terminal edge
-edgeTerminal :: AutomatonEdge t nt s c -> Maybe c
+edgeTerminal :: AutomatonEdge t nt s c -> Maybe t
 edgeTerminal (TerminalEdge c) = Just c
 edgeTerminal _                = Nothing
 
@@ -156,7 +156,7 @@ instance Show (AutomatonEdge t nt s c) where
     show (MutationEdge n _)   = "{mutation " ++ show n ++ "}"
 
 -- | represents the augmented transition network form of a grammar
-data Classifiable t c => ATN t nt s c = ATN {
+data Classifiable c t => ATN t nt s c = ATN {
         -- | number of states in this ATN
         atnStateCount            :: Int,
         -- | for each state, identifies either:
@@ -180,7 +180,7 @@ data Classifiable t c => ATN t nt s c = ATN {
 -- | represents the calculated portions of the (potentially-infinite) deterministic finite state automaton that predicts
 -- the production to take at each choice point in the parse.  uses mutable hash tables to allow new states and edges
 -- to be added easily.
-data Classifiable t c => DFA t nt s c = DFA {
+data Classifiable c t => DFA t nt s c = DFA {
         dfaNextAvailableId :: Int,                                              -- id of next state to add to automaton
         dfaATNStateToDFA :: H.CuckooHashTable (Int,Int) Int,                    -- (production,index) -> state id
         dfaStates        :: H.CuckooHashTable Int (Set (Int,Int), M.Map c Int), -- state id -> (set (production,index), token -> state id)
@@ -188,13 +188,13 @@ data Classifiable t c => DFA t nt s c = DFA {
     }
 
 -- | stores mutable references to a cached ATN and lookahead DFA for a grammar
-data Classifiable t c => AutomataCache t nt s c = AutomataCache {
+data Classifiable c t => AutomataCache t nt s c = AutomataCache {
         cachedATN :: IORef (Maybe (ATN t c nt s)),
         cachedLookaheadDFA :: IORef (Maybe (DFA t nt s c))
     } deriving Eq
 
 -- | Automata caches can show whether ATN and DFA fields are populated for debugging purposes
-instance Classifiable t c => Show (AutomataCache t nt s c) where
+instance Classifiable c t => Show (AutomataCache t nt s c) where
     show acache = "{cache" ++ (if isATNAvailable acache then "-atn" else "") ++
                               (if isDFAAvailable acache then "-dfa" else "") ++ "}"
 
@@ -203,10 +203,10 @@ instance Classifiable t c => Show (AutomataCache t nt s c) where
 -- used for parsing it.
 
 data Grammar t nt s c where
-    Grammar    :: Classifiable t c => [Symbol t nt s c] -> nt -> AutomataCache t nt s c -> Grammar t nt s c
+    Grammar    :: Classifiable c t => [Symbol t nt s c] -> nt -> AutomataCache t nt s c -> Grammar t nt s c
 
 deriving instance (Show c, Show nt) => Show (Grammar t nt s c)
-deriving instance (Eq c, Eq nt, Classifiable t c) => Eq (Grammar t nt s c)
+deriving instance (Eq c, Eq nt, Classifiable c t) => Eq (Grammar t nt s c)
 
 -- | The result of successfully parsing an input stream is a parse tree, showing the productions
 -- used during parsing.
@@ -225,19 +225,19 @@ type ATNWithProductionCursor t nt s c = (ATN t nt s c, (Int, Int, Int))
 type ATNWithNonTerminalState t nt s c = (ATN t nt s c, (Int, Int))
 
 -- | Returns the start symbol of a Grammar
-startSymbol :: Classifiable t c => Grammar t nt s c -> nt
+startSymbol :: Classifiable c t => Grammar t nt s c -> nt
 startSymbol (Grammar _ ss _) = ss
 
 -- | Unsafely check if an ATN is available for a grammar. Should only be used for debugging.
-isATNAvailable :: Classifiable t c => AutomataCache t nt s c -> Bool
+isATNAvailable :: Classifiable c t => AutomataCache t nt s c -> Bool
 isATNAvailable (AutomataCache hATN _) = unsafePerformIO $ isJust <$> readIORef hATN
 
 -- | Unsafely check if a Lookahead DFA is available for a grammar. Should only be used for debugging.
-isDFAAvailable :: Classifiable t c => AutomataCache t nt s c -> Bool
+isDFAAvailable :: Classifiable c t => AutomataCache t nt s c -> Bool
 isDFAAvailable (AutomataCache _ hDFA) = unsafePerformIO $ isJust <$> readIORef hDFA
 
 -- | Creates an empty automata cache (containing neither an ATN nor a DFA)
-mkCache :: Classifiable t c => IO (AutomataCache t nt s c)
+mkCache :: Classifiable c t => IO (AutomataCache t nt s c)
 mkCache = AutomataCache <$> newIORef Nothing <*> newIORef Nothing
 
 -- | Creates an empty automata cache for a language with character input and
@@ -246,7 +246,7 @@ mkCacheCSI :: IO (AutomataCache Char String Int Char)
 mkCacheCSI = mkCache
 
 -- | Produces an empty ATN
-emptyATN :: Classifiable t c => ATN t nt s c
+emptyATN :: Classifiable c t => ATN t nt s c
 emptyATN = ATN 0 IM.empty M.empty IM.empty IM.empty IM.empty
 
 -- | Produces an empty ATN for character input with strings for non-terminals
@@ -256,7 +256,7 @@ emptyATNCSI = emptyATN
 
 -- | Looks up an ATN state and returns the production number that the state was
 -- created to represent
-atnStateToProduction :: Classifiable t c => ATN t nt s c -> Int -> Maybe Int
+atnStateToProduction :: Classifiable c t => ATN t nt s c -> Int -> Maybe Int
 atnStateToProduction atn state = fst <$> (IM.lookup state (atnStateProductionIndex atn) >>= maybeFromRight)
 
 -- | Given an 'Either', return a 'Maybe' that contains the 'Right' value of the 'Either' (or 'Nothing' for a 'Left'
@@ -299,7 +299,7 @@ maybeFromRight = either (const Nothing) Just
 -- 'verifyATN' can be used to check for this condition, as well as other problematic conditions (e.g.
 -- left recursion).
 
-addProductionToATN :: Classifiable t c => ATN t nt s c -> nt -> Production t nt s c -> ATN t nt s c
+addProductionToATN :: (Classifiable c t, Show c) => ATN t nt s c -> nt -> Production t nt s c -> ATN t nt s c
 addProductionToATN atn nt (Production prodNum optPred symbols) =
     process atn
     where
@@ -313,7 +313,7 @@ addProductionToATN _ _ (Mutation _ _) = error "adding mutators to ATN not suppor
 -- | For a given non-terminal and an ATN, return an ATN (possibly modified by
 -- adding index entries and start/accept states for the non-terminal) and a
 -- tuple defining the start and accept states for the non-terminal.
-atnAddOrFindNonTerminal :: (Ord nt, Classifiable t c) => nt -> ATN t nt s c -> ATNWithNonTerminalState t nt s c
+atnAddOrFindNonTerminal :: (Ord nt, Classifiable c t) => nt -> ATN t nt s c -> ATNWithNonTerminalState t nt s c
 atnAddOrFindNonTerminal nt atn =
     case M.lookup nt (atnNonTerminalStates atn) of
         Just states -> (atn, states)
@@ -339,7 +339,7 @@ atnAddOrFindNonTerminal nt atn =
 -- update indices, add an epsilon transition from the non-terminal start state
 -- to the production start state, and return the ATN along with a triple defining
 -- the non-terminal start and stop states and the allocated production start state.
-atnAddProductionStartState :: (Ord nt, Classifiable t c) => Int -> ATNWithNonTerminalState t nt s c -> ATNWithProductionCursor t nt s c
+atnAddProductionStartState :: (Ord nt, Classifiable c t) => Int -> ATNWithNonTerminalState t nt s c -> ATNWithProductionCursor t nt s c
 atnAddProductionStartState prodNum (atn,(ntStart,ntEnd)) =
     let
         newState = atnStateCount atn
@@ -354,7 +354,7 @@ atnAddProductionStartState prodNum (atn,(ntStart,ntEnd)) =
 
 -- | Given a production number and optional predicate on the production, add a
 -- predicate edge to
-atnAddProductionPredicate :: (Ord nt, Classifiable t c) => Int -> Maybe (Predicate [nt] s) -> ATNWithProductionCursor t nt s c -> ATNWithProductionCursor t nt s c
+atnAddProductionPredicate :: (Ord nt, Classifiable c t) => Int -> Maybe (Predicate [nt] s) -> ATNWithProductionCursor t nt s c -> ATNWithProductionCursor t nt s c
 atnAddProductionPredicate _ Nothing atn = atn
 atnAddProductionPredicate prodNum (Just predicate) (atn,(ntStart,ntEnd,i)) =
     let
@@ -367,7 +367,7 @@ atnAddProductionPredicate prodNum (Just predicate) (atn,(ntStart,ntEnd,i)) =
     }, (newState, ntEnd, i+1))
 
 -- | Update an ATN
-atnAddProductionSymbols :: (Ord c, Ord nt, Show c, Show nt, Classifiable t c) => Int -> [Either c nt] -> ATNWithProductionCursor t nt s c -> ATNWithProductionCursor t nt s c
+atnAddProductionSymbols :: (Ord t, Ord nt, Show t, Show c, Show nt, Classifiable c t) => Int -> [Either t nt] -> ATNWithProductionCursor t nt s c -> ATNWithProductionCursor t nt s c
 atnAddProductionSymbols _ [] atn = atn
 atnAddProductionSymbols prodNum (Left c:syms) (atn,(ntStart,ntEnd,i)) =
     let
@@ -390,7 +390,7 @@ atnAddProductionSymbols prodNum (Right nt:syms) (atn,(ntStart,ntEnd,i)) =
 
 -- | Update an ATN to add a transition from the last state in a production to the
 -- accept state for the non-terminal produced by the production.
-atnAddEndStateLink :: Classifiable t c => ATNWithProductionCursor t nt s c -> ATN t nt s c
+atnAddEndStateLink :: Classifiable c t => ATNWithProductionCursor t nt s c -> ATN t nt s c
 atnAddEndStateLink (atn, (ntLast, ntEnd, _)) = atn {
         atnTransitionMap = insertTransition ntLast ntEnd Epsilon $ atnTransitionMap atn
     }
@@ -398,7 +398,7 @@ atnAddEndStateLink (atn, (ntLast, ntEnd, _)) = atn {
 
 -- | Add a transition to a transition map from 'fromState' to 'toState' with the
 -- edge label 'edge'.
-insertTransition :: Classifiable t c => Int -> Int -> AutomatonEdge t nt s c -> IntMap (M.Map (AutomatonEdge t nt s c) [Int]) -> IntMap (M.Map (AutomatonEdge t nt s c) [Int])
+insertTransition :: Classifiable c t => Int -> Int -> AutomatonEdge t nt s c -> IntMap (M.Map (AutomatonEdge t nt s c) [Int]) -> IntMap (M.Map (AutomatonEdge t nt s c) [Int])
 insertTransition fromState toState edge transitionMap =
     case IM.lookup fromState transitionMap of
         Nothing    -> IM.insert fromState (M.fromList [(edge, [toState])]) transitionMap
@@ -411,7 +411,7 @@ insertTransition fromState toState edge transitionMap =
 -- not have a corresponding accept state (i.e. they are used in the grammar but
 -- are not defined), and left-recursive definitions (including definitions that
 -- contain a sequence of left derivations that are mutually recursive).
-verifyATN :: (Show nt, Ord nt, Classifiable t c) => ATN t nt s c -> [(String, [Int])]
+verifyATN :: (Show nt, Ord nt, Classifiable c t) => ATN t nt s c -> [(String, [Int])]
 verifyATN atn = missingNonTerminals ++ leftRecursiveEntries
     where
         missingNonTerminals = concatMap checkForDefinition findUsedNonTerminals
@@ -429,7 +429,7 @@ verifyATN atn = missingNonTerminals ++ leftRecursiveEntries
 
 -- | Given an ATN and a non-terminal defined within that ATN, find all valid
 -- states that can be used to begin parsing at the specified non-terminal.
-allProductionStarts :: (Ord nt, Classifiable t c) => ATN t nt s c -> nt -> [Int]
+allProductionStarts :: (Ord nt, Classifiable c t) => ATN t nt s c -> nt -> [Int]
 allProductionStarts atn nt =
     case fst <$> M.lookup nt (atnNonTerminalStates atn) of
         Just startState -> followEpsilons atn startState
@@ -438,7 +438,7 @@ allProductionStarts atn nt =
 -- | Given an ATN and a state in the ATN, find all successor states that can
 -- be consumed without consuming input (i.e. by following transitions that are
 -- labelled with epsilon).
-followEpsilons :: Classifiable t c => ATN t nt s c -> Int -> [Int]
+followEpsilons :: Classifiable c t => ATN t nt s c -> Int -> [Int]
 followEpsilons atn s =
     let stateTransitions = IM.lookup s (atnTransitionMap atn)
         maybeOutputStates = stateTransitions >>= M.lookup Epsilon
@@ -447,7 +447,7 @@ followEpsilons atn s =
 -- | Find edges from a given ATN state that correspond to non-terminals.
 -- Returns a list of (non-terminal, state-after-non-terminal-accepted) pairs.
 
-nonTerminalEdgesFrom :: Classifiable t c => ATN t nt s c -> Int -> [(nt, Int)]
+nonTerminalEdgesFrom :: Classifiable c t => ATN t nt s c -> Int -> [(nt, Int)]
 nonTerminalEdgesFrom atn state =
     case IM.lookup state (atnTransitionMap atn) of
         Just stateTransitions -> concatMap expandSelectedEdges (first edgeNonTerminal <$> M.toAscList stateTransitions)
@@ -467,7 +467,7 @@ nonTerminalEdgesFrom atn state =
 --
 -- Derivations are returned in reverse order (i.e. with the most recently applied
 -- rule first), as this is easier to calculate.
-leftmostNonTerminals :: forall c nt s t . (Ord nt, Classifiable t c) => ATN t nt s c -> nt -> M.Map nt [Int]
+leftmostNonTerminals :: forall c nt s t . (Ord nt, Classifiable c t) => ATN t nt s c -> nt -> M.Map nt [Int]
 leftmostNonTerminals atn root =
     findPathsFrom root [] M.empty
     where
@@ -507,16 +507,16 @@ leftmostNonTerminals atn root =
                     | otherwise                         -> shortestPaths
 
 -- | Find the start state of a given production in an ATN
-atnProductionStart :: Classifiable t c => ATN t nt s c -> Int -> Maybe Int
+atnProductionStart :: Classifiable c t => ATN t nt s c -> Int -> Maybe Int
 atnProductionStart atn prodnum = IM.lookup prodnum $ atnProductionStartState atn
 
-atnFindTransition :: (Classifiable t c, Ord c, Ord nt, Show c, Show nt) => ATN t nt s c -> Int -> Either c nt -> Maybe [Int]
+atnFindTransition :: (Classifiable c t, Ord t, Ord nt, Show t, Show nt) => ATN t nt s c -> Int -> Either c nt -> Maybe [Int]
 atnFindTransition atn state inp =
     do
         statemap <- IM.lookup state $ atnTransitionMap atn
         M.lookup (expectedEdge inp) statemap
     where
-        expectedEdge (Left term)     = TerminalEdge term
+        expectedEdge (Left term)     = TerminalEdge $ classification term
         expectedEdge (Right nonterm) = NonTerminalEdge nonterm
         
         
