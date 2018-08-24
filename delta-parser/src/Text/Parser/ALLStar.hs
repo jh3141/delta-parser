@@ -3,6 +3,7 @@ module Text.Parser.ALLStar where
 
 import Data.IORef
 import Text.Parser.Delta.Classifiable
+import Text.Parser.Delta.Util
 import qualified Data.HashTable.IO as H
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IM
@@ -527,3 +528,18 @@ atnFindTransition atn state inp =
 -- but may not be appropriate for complex machine generated grammars.
 productionMaxLength :: Int
 productionMaxLength = 1000
+
+-- | type of ATN interpreter states
+type ATNInterpretationState nt s = S.Set Int
+
+-- | apply a function of individual ATN states to interpreter states
+(<++) :: Foldable f => ATNInterpretationState nt s -> (Int -> f Int) -> ATNInterpretationState nt s
+st <++ f = foldMapConcat f S.singleton st
+
+-- | find all valid ATN interpreter start states (including following epsilon paths) for a given nonterminal
+atnNonterminalStart :: (Classifiable c t, Ord nt) => ATN t nt s c -> nt -> ATNInterpretationState nt s
+atnNonterminalStart atn nonterm = S.fromList $ allProductionStarts atn nonterm
+
+-- | find next valid state set given current state and next input symbol
+atnStep :: (Classifiable c t, Ord t, Ord nt, Show t, Show nt) => ATN t nt s c -> ATNInterpretationState nt s -> c -> ATNInterpretationState nt s
+atnStep atn st c = st <++ (\ s -> fromMaybe [] (atnFindTransition atn s $ Left c))

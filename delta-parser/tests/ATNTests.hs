@@ -3,6 +3,7 @@ module ATNTests (allTests) where
 
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Data.Maybe
 
 import Test.Tasty
@@ -13,6 +14,14 @@ import Text.Parser.ALLStar
 
 inMap :: Ord k => k -> M.Map k a -> Bool
 k `inMap` m = isJust $ M.lookup k m
+
+-- atnhi: a simple atn with one nonterminal ("nonterm") and a single production that just recognises "hi".
+-- state 0 should be the start state for "nonterm", state 2 the start state for
+-- production 1, 3 the point after receiving 'h', 4 after 'i', and 1 the accept state for "nonterm".
+atnhi = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
+-- atnhiho: takes atnhi and adds an extra production that recognises "ho".
+atnhiho = addProductionToATN atnhi "nonterm" (Production 2 Nothing [Left 'h', Left 'o'])
+
 
 allTests :: [TestTree]
 allTests =
@@ -123,21 +132,15 @@ allTests =
             assertEqual "atn compare to updated atn" origAtn atn,
 
         testCase "atnProductionStart retrives start state for given production" $ do
-            let atn = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
-            -- at this point, state 0 should be the start state for "nonterm", state 2 the start state for
-            -- production 1, 3 the point after receiving 'h', 4 after 'i', and 1 the accept state for "nonterm".
-            assertEqual "production start should have been 2" (Just 2) $ atnProductionStart atn 1,
+            assertEqual "production start should have been 2" (Just 2) $ atnProductionStart atnhi 1,
 
         testCase "different start states for different productions of the same non-terminal" $ do
-            let atn1 = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
-            let atn = addProductionToATN atn1 "nonterm" (Production 2 Nothing [Left 'h', Left 'o'])
-            assertEqual "production 1 should start on state 2" (Just 2) $ atnProductionStart atn 1
-            assertEqual "production 2 should start on state 5" (Just 5) $ atnProductionStart atn 2,
+            assertEqual "production 1 should start on state 2" (Just 2) $ atnProductionStart atnhiho 1
+            assertEqual "production 2 should start on state 5" (Just 5) $ atnProductionStart atnhiho 2,
 
         testCase "can find valid production from a single state" $ do
-            let atn = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
-            let startState = fromJust $ atnProductionStart atn 1
-            assertEqual "should have found the correct state" (Just [3]) $ atnFindTransition atn startState (Left 'h'),
+            let startState = fromJust $ atnProductionStart atnhi 1
+            assertEqual "should have found the correct state" (Just [3]) $ atnFindTransition atnhi startState (Left 'h'),
 
         testCase "can find nonterminal production from a single state" $ do
             let atn = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Right "another", Left 'i'])
@@ -145,8 +148,15 @@ allTests =
             assertEqual "should have found the correct state" (Just [3]) $ atnFindTransition atn startState (Right "another"),
 
         testCase "no transition found when no match" $ do
-            let atn = addProductionToATN emptyATNCSI "nonterm" (Production 1 Nothing [Left 'h', Left 'i'])
-            let startState = fromJust $ atnProductionStart atn 1
-            assertEqual "should have not found a transition" Nothing $ atnFindTransition atn startState (Left 'i')
+            let startState = fromJust $ atnProductionStart atnhi 1
+            assertEqual "should have not found a transition" Nothing $ atnFindTransition atnhi startState (Left 'i'),
+
+        testCase "can find all start states for a non-terminal" $ do
+            let startStates = atnNonterminalStart atnhiho "nonterm"
+            assertEqual "should have start states for both productions" (S.fromList [2, 5]) startStates,
+
+        testCase "can find all appropriate next states from set of start states" $ do
+           let startStates = atnNonterminalStart atnhiho "nonterm"
+           assertEqual "should have intermediate states for both productions" (S.fromList [3, 6]) (atnStep atnhiho startStates 'h')
 
     ]
